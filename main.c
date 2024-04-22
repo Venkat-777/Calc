@@ -1,84 +1,235 @@
 #include "__TM4C123GH6PM_H__.h"
-void UARTInit(void)
-{
-    SYSCTL_RCGCUART_R |= 0x01;
-    GPIO_PORTA_AFSEL_R |= 0x03;
-    GPIO_PORTA_DEN_R |= 0x03;
-    GPIO_PORTA_PUR_R |= 0x00;
-    GPIO_PORTA_PDR_R |= 0x00;
-    GPIO_PORTA_PCTL_R |= 0x011;
-    GPIO_PORTA_CR_R |= 1;
-    UART0_CTL_R |= 0x00;
-    UART0_IBRD_R = 104;
-    UART0_FBRD_R = 11;
-    UART0_LCRH_R = 0x60;
-    UART0_CTL_R |= 0x301;
-    UART0_DR_R |= 0x00;
+
+int A = 0;//GLOBAL A
+int B = 0;// GLOBAL B
+
+//Different states
+typedef enum {
+    IN,
+    ST,
+    A_,
+    B_,
+    DI,
+} state;
+state currState = IN;
+void delay(unsigned long lim) {
+    while(lim)
+    {
+        lim--;
+    }
 }
-void UART_Tx (char data)
+void Delay(void)
 {
-    while((UART0_FR_R & 0x20) != 0);
-    UART0_DR_R = data;
+    volatile unsigned long i;
+    for(i=0;i<100000;i++);
+}
+void Delay2(void)
+{
+    volatile unsigned long i;
+    for(i=0;i<25000;i++);
+}
+//instruction
+void lcd_in(int i)
+{
+    GPIO_PORTF_DATA_R = 0x0;
+    Delay();
+    GPIO_PORTB_DATA_R = i;
+    GPIO_PORTF_DATA_R |= (1 << 3);
+    Delay();
+    GPIO_PORTF_DATA_R ^= (1 << 3);
+    Delay();
+}
+//data
+void lcd_data(unsigned char data)
+{
+    GPIO_PORTF_DATA_R |= 0x02;
+    GPIO_PORTF_DATA_R &= ~0x04;
+    GPIO_PORTB_DATA_R = data;
+    GPIO_PORTF_DATA_R |= 0x08;
+    delay(100000);
+    GPIO_PORTF_DATA_R &= ~0x08;
+    delay(100000);
+}
+//init fxn
+void lcd_init()
+{
+    lcd_in(0x38);
+    delay(10000);
+    lcd_in(0x38);
+    delay(10000);
+    lcd_in(0x01);
+    delay(10000);
+    lcd_in(0x06);
+    delay(10000);
+    lcd_in(0x0F);
+    delay(10000);
+}
+char getKey(void)
+{
+    const char matx[4][4] = { {'1', '2', '3', 'A'},{'4', '5', '6', 'B'},{'7', '8', '9', 'C'}, {'*', '0', '#', 'D'}};
+    unsigned int row;
+    unsigned int col;
+    for (row = 0; row < 4; row++)
+    {
+        GPIO_PORTC_DATA_R = 1 << (row+4);
+        for (col = 0; col < 4; col++)
+        {
+            if ((GPIO_PORTE_DATA_R & (1 << (col + 1))))
+            {
+                int i;
+                char c = matx[row][col];
+                while ((GPIO_PORTE_DATA_R & (1 << (col + 1))));
+                delay(300000);
+                return c;
+            }
+        }
+    }
+    return '%';
+}
+void reset()
+{
+    A = 0;
+    B = 0;
+    currState = ST;
+    lcd_in(0x01);
+}
+void  print(int i)
+{
+    if(i == 0)
+    {
+        return;
+    } else
+    {
+        char c;
+        int dig = i % 10;
+         print(i / 10);
+        c = '0' + dig;
+        lcd_data(c);
+    }
+}
+void displayResult()
+{
+    int result = A * B;
+    lcd_in(0xC0);
+     print(result);
+    lcd_in(0x80);
+}
+void clearTopRow()
+{
+    lcd_in(0x80);
+    int i;
+    for (i = 0; i < 16; i++)
+    {
+        lcd_data(' ');
+    }
+    lcd_in(0x80);
+}
+int getNumberOfDigits(int number)
+{
+    if (number == 0) return 1;
+    int digits = 0;
+    while (number != 0)
+    {
+        number /= 10;
+        digits++;
+    }
+    return digits;
+}
+void initial_State()
+{
+    currState = ST;
+    reset();
 }
 
-char UART_Rx ()
+void start_State()
 {
-    char data;
-    if((UART0_FR_R & 0x10));
-    data = UART0_DR_R;
-    return ((unsigned char) data);
-}
-void ADCInit(void)
-{
-    SYSCTL_RCGCADC_R |= 0x01; // Enable ADC0
-    SYSCTL_RCGCGPIO_R |= 0x11; // Enable GPIO Port E
-    GPIO_PORTE_AFSEL_R |= 0x08; // Enable alternate function on PE3
-    GPIO_PORTE_DEN_R &= ~0x08; // Disable digital function on PE3
-    GPIO_PORTE_AMSEL_R |= 0x08; // Enable analog function on PE3
-    ADC0_ACTSS_R &= ~0x08; // Disable sample sequencer 3
-    ADC0_EMUX_R &= ~0xF000; // Set EM3 as a software trigger
-    ADC0_SSMUX3_R = 0x00; // Select channel AIN0 (PE3)
-    ADC0_SSCTL3_R |= (1<<1)|(1<<2); // Set END0 and IE0
-    ADC0_ACTSS_R |= 0x08; // Enable sample sequencer 3
+    currState = A_;
+    clearTopRow();
+    A = 0;
+    B = 0;
 }
 
-void PWMInit(void)
+void A_State(char key)
 {
-    //setting up PWM----------------------------------
-    SYSCTL_RCGCPWM_R |= 0x01; // Enable PWM0
-    SYSCTL_RCGCGPIO_R |= 0x02; // Enable GPIO Port B
-    GPIO_PORTB_DIR_R |= 0x40; // Set PB6 as output
-    GPIO_PORTB_DEN_R |= 0x40; // Enable digital function on PB6
-    GPIO_PORTB_AFSEL_R |= 0x40; // Enable alternate function on PB6
-    GPIO_PORTB_PCTL_R |= 0x04000000; // Configure PB6 as PWM0
-    SYSCTL_RCC_R |= SYSCTL_RCC_USEPWMDIV; // Use PWM divider
-    SYSCTL_RCC_R &= ~SYSCTL_RCC_PWMDIV_M; // Clear PWM divider field
-    SYSCTL_RCC_R |= SYSCTL_RCC_PWMDIV_2; // Set PWM divider to 64
-    PWM0_CTL_R = 0x00; // Disable PWM0
-    PWM0_0_GENA_R = 0x0000008C; // Configure PWM0, Generator 0, as a down-counting mode
-    PWM0_0_LOAD_R = 16000; // Set PWM0 load value (period = 64000)
-    PWM0_0_CMPA_R = 1600; // Set PWM0 compare A value
-    PWM0_CTL_R |= 0x01; // Enable PWM0
-    PWM0_ENABLE_R |= 0x01; // Enable PWM0, output on PB6
+    if (key == '*')
+    {
+        currState = B_;
+        clearTopRow();
+    }
+    else if (key >= '0' && key <= '9')
+    {
+        A = A * 10 + (key - '0');
+        lcd_data(key);
+        if (getNumberOfDigits(A) == 8)
+        {
+            currState = B_;
+            clearTopRow();
+        }
+    }
+    else if (key == 'C')
+    {
+        currState = IN;
+    }
+    else if (key == '#')
+    {
+        currState = DI;
+    }
 }
-
-void delay(unsigned long i)
+void B_State(char key)
 {
-    while(i != 0)
-        i--;
+    if (key == '#') currState = DI;
+    else if (key == 'C') currState = IN;
+    else if (key >= '0' && key <= '9')
+    {
+        B = B * 10 + (key - '0');
+        lcd_data(key);
+        if (getNumberOfDigits(B) == 8)  currState = DI;
+    }
+}
+void displayState()
+{
+    currState = ST;
+    displayResult();
 }
 int main(void)
 {
-    ADCInit();
-    PWMInit();
-    UARTInit();
-    unsigned int adc_val;
-    while(1)
+    SYSCTL_RCGCGPIO_R = 0x3F;
+
+    GPIO_PORTF_DEN_R = 0xE;
+    GPIO_PORTF_DIR_R = 0xE;
+
+    GPIO_PORTB_DATA_R = 0x00;
+    GPIO_PORTB_DEN_R = 0xFF;
+    GPIO_PORTB_DIR_R = 0xFF;
+
+    GPIO_PORTC_DEN_R = 0xF0;
+    GPIO_PORTC_DIR_R = 0xF0;
+    GPIO_PORTE_DEN_R = 0x1E;
+    GPIO_PORTE_DIR_R = 0x00;
+    A = 0;
+    B = 0;
+    lcd_init();
+    Delay();
+    while (1)
     {
-        ADC0_PSSI_R |= (1<<3);
-        while((ADC0_RIS_R & 8) == 0);
-        adc_val = ADC0_SSFIFO0_R;
-        UART_Tx(adc_val);
-        ADC0_ISC_R |= (1<<3); // clear interrupt status
+        char c = getKey();
+        switch(currState)
+        {
+        case IN:
+            initial_State();
+            break;
+        case ST:
+            start_State();
+            break;
+        case A_:
+            A_State(c);
+            break;
+        case B_:
+            B_State(c);
+            break;
+        case DI:
+            displayState();
+            break;
+        }
     }
 }
